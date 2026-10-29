@@ -1,0 +1,10 @@
+# example .Renviron for project configuration.  No spaces allowed around x='y'
+# copy this file to one named .Renviron (leading dot). 
+PROJECT_EMAIL='billspat@msu.edu'
+PROJECT_API_KEY=''
+DRIVE_API_ID_FILE="$HOME/client_secret_....json"
+DRIVE_API_ID_NAME=''
+PROJECT_SHARE_DRIVE=''
+PROJECT_SHARE_DRIVE_PATH=''
+ID_LIST_URL=''
+SPEC_URL=''

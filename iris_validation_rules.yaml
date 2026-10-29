@@ -1,0 +1,22 @@
+rules:
+- expr: '!is.na(species)'
+  name: 'species'
+  label: ''
+  description: 'species is required'
+  meta:
+    language: validate 1.1.5
+    severity: error
+- expr: is.character(species)
+  name: 'spp_character'
+  label: 'species is required and must be character'
+  description: ''
+  meta:
+    language: validate 1.1.5
+    severity: error
+- expr: nchar(as.character(Species)) >= 2
+  name: 'species_two_or_more_chars'
+  label: 'species must be more than 2 characters'
+  description: ''
+  meta:
+    language: validate 1.1.5
+    severity: error
