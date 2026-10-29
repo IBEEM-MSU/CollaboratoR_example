@@ -1,4 +1,10 @@
+# configuration, keys, passwords
+# never put that into git
 .Renviron
+
+# rstudio stuff
 .Rhistory
 .Rproj.user
 .RData
+# mac stuff
+.DS_Store
