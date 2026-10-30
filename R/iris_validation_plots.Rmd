@@ -1,0 +1,349 @@
+---
+title: 'collaboratoR example: diagnostic plots for compiled data sheets'
+output:
+  pdf_document: default
+  html_document:
+    self_contained: true
+    theme: null
+    css: null
+---
+
+<style>
+body { background:#ffffff; color:#000000; font-family:Helvetica, Arial, sans-serif; font-size:11pt; line-height:1.45; max-width:1100px; margin:24px auto; padding:0 16px; }
+h1 { font-size:15pt; } h2 { font-size:12.5pt; margin-top:30px; border-bottom:1px solid #cccccc; padding-bottom:2px; }
+table { border-collapse:collapse; font-size:10pt; margin:8px 0 16px 0; }
+th, td { border-bottom:1px solid #dddddd; padding:3px 10px; text-align:left; }
+</style>
+
+
+This page shows how a few plots can catch data entry errors that pass the schema and rule checks. The data are Anderson's Iris measurements (Anderson 1936), split into nine "study" sheets, three per species, each entered by a different collaborator. We gave each row a collection site on the Gaspé Peninsula and seeded a set of errors of the kinds we met when compiling studies for the IBEEM meta-analysis. In every plot, black marks rows that look fine and red marks rows the plot flags, labelled by sheet, row and the person who entered it.
+
+To re-run these plots, you must install several packages: 
+
+```{r install-libraries,  include = TRUE}
+install.packages(c("dplyr","tidyr","ggplot2","ggrepel","patchwork","sf","rnaturalearth"))
+```
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE, dpi = 150)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(ggrepel)
+library(patchwork)
+library(sf)
+library(rnaturalearth)
+sf_use_s2(FALSE)
+
+
+RED   <- "#d7191c"
+BLACK <- "#000000"
+GREY  <- "#9a9a9a"
+
+theme_set(
+  theme_classic(base_size = 10, base_family = "Helvetica") +
+    theme(panel.grid = element_blank(),
+          plot.title = element_text(face = "bold", size = 10.5),
+          plot.subtitle = element_text(colour = "#555555", size = 8.5),
+          strip.background = element_blank(),
+          strip.text = element_text(face = "bold"),
+          legend.position = "none")
+)
+```
+
+```{r build-sheets}
+# # BUILD NINE STUDY SHEETS, THREE PER SPECIES, EACH WITH ITS OWN ENTERER AND SITES
+# sites <- tibble(
+#   site = c("Riviere-Madeleine", "Mont-Albert", "Cap-Chat", "Murdochville", "Perce", "Matane"),
+#   lat  = c(49.05, 48.95, 49.10, 48.70, 48.60, 48.85),
+#   lon  = c(-65.90, -65.20, -66.40, -65.60, -64.80, -64.60)
+# )
+# 
+# set.seed(1936)
+# sheets <- iris %>%
+#   mutate(species = as.character(Species)) %>%
+#   group_by(species) %>%
+#   mutate(part = c("A", "B", "C")[ceiling(row_number() / 17)]) %>%
+#   ungroup() %>%
+#   mutate(sheet = paste0(species, "_", part),
+#          whos  = recode(sheet, setosa_A = "EA", setosa_B = "MB", setosa_C = "JC",
+#                         versicolor_A = "RT", versicolor_B = "SK", versicolor_C = "NP",
+#                         virginica_A = "DL", virginica_B = "HW", virginica_C = "GF")) %>%
+#   group_by(sheet) %>%
+#   mutate(row = row_number(),
+#          site = sample(sites$site, n(), replace = TRUE)) %>%
+#   ungroup() %>%
+#   left_join(sites, by = "site") %>%
+#   transmute(sheet, row, whos, species, site, lat, lon,
+#             Sepal.L = Sepal.Length, Sepal.W = Sepal.Width,
+#             Petal.L = Petal.Length, Petal.W = Petal.Width)
+# 
+# # SEED ERRORS
+# seed <- function(d, s, r, col, value) {
+#   d[[col]][d$sheet == s & d$row %in% r] <- value
+#   d
+# }
+# sheets <- sheets %>%
+#   seed("setosa_A", 14, "Petal.L", 14.0) %>%          # DECIMAL SLIP (1.4 TYPED AS 14)
+#   seed("versicolor_B", 7, "Sepal.W", -2.9) %>%       # NEGATIVE VALUE
+#   seed("setosa_B", 10:14, "Petal.W", NA) %>%         # BLANK CELLS IN ONE COLUMN
+#   seed("versicolor_A", 9, "species", "Versicolor ") # SPECIES NOT ON THE LIST
+# 
+# vb <- sheets$sheet == "virginica_C"                 # WHOLE SHEET ENTERED IN MM
+# sheets[vb, c("Sepal.L", "Sepal.W", "Petal.L", "Petal.W")] <-
+#   sheets[vb, c("Sepal.L", "Sepal.W", "Petal.L", "Petal.W")] * 10
+# 
+# sw <- sheets$sheet == "versicolor_A" & sheets$row %in% 3:5   # PETAL LENGTH AND WIDTH SWAPPED
+# sheets[sw, c("Petal.L", "Petal.W")] <- sheets[sw, c("Petal.W", "Petal.L")]
+# 
+# sheets <- sheets %>%
+#   seed("virginica_A", 10, "species", "setosa") %>%   # WRONG SPECIES ON THE LIST
+#   seed("versicolor_B", 12, "lon", 64.60) %>%         # DROPPED MINUS ON LONGITUDE
+#   seed("virginica_A", 15, "lat", 48.70) %>%          # POINT IN THE GULF OF ST LAWRENCE
+#   seed("virginica_A", 15, "lon", -63.60)
+# sheets[sheets$sheet == "setosa_A" & sheets$row == 16, c("lat", "lon")] <- list(-64.60, 48.85)  # LAT AND LON SWAPPED
+# 
+# dups <- sheets %>% filter(sheet == "setosa_A", row %in% 1:5) %>%   # ROWS PASTED INTO A SECOND SHEET
+#   mutate(sheet = "setosa_C", row = 17:21, whos = "JC")
+# sheets <- bind_rows(sheets, dups) %>% arrange(sheet, row)
+# 
+# sheets <- sheets %>% mutate(id = paste0(sheet, " r", row, " (", whos, ")"))
+```
+
+```{r read_sheets}
+source(here::here(file.path('R', 'example_data.R')))
+# run this if there is no example data to download
+# sheet_list <- names(save_sheet_csvs(synthetic_datasheets()))
+# reads from the 'example_data' folder 
+sheets <- read_example_csvs()
+```
+
+```{r validate}
+# SCHEMA AND RULE VALIDATION: REQUIRED CELLS, POSITIVE MEASUREMENTS, SPECIES ON THE LIST
+species_list <- c("setosa", "versicolor", "virginica")
+meas <- c("Sepal.L", "Sepal.W", "Petal.L", "Petal.W")
+
+cell_fail <- sheets %>%
+  select(sheet, row, species, all_of(meas)) %>%
+  mutate(across(all_of(meas), ~ is.na(.x) | .x <= 0),
+         species = !species %in% species_list) %>%
+  pivot_longer(-c(sheet, row), names_to = "column", values_to = "fail")
+
+row_fail <- cell_fail %>% group_by(sheet, row) %>% summarise(fail_rule = any(fail), .groups = "drop")
+sheets <- sheets %>% left_join(row_fail, by = c("sheet", "row"))
+```
+
+```{r flag}
+# PLOT B: SHEETS WHOSE MEDIAN IS MORE THAN TWICE OR LESS THAN HALF THE MEDIAN OF SHEETS FOR THE SAME SPECIES
+sheets <- sheets %>% mutate(group = sub("_.*", "", sheet))
+sheet_shift <- sheets %>%
+  group_by(group, sheet) %>%
+  summarise(med = median(Petal.L, na.rm = TRUE), .groups = "drop") %>%
+  group_by(group) %>%
+  mutate(ratio = med / median(med)) %>%
+  ungroup()
+shifted <- sheet_shift$sheet[sheet_shift$ratio > 2 | sheet_shift$ratio < 0.5]
+
+# PLOT A: PETAL LENGTH AND SEPAL WIDTH MORE THAN 10 ROBUST SD (FLOOR 0.1 CM) FROM THEIR SPECIES MEDIAN, OR NOT POSITIVE
+pooled <- sheets %>%
+  filter(!sheet %in% shifted) %>%
+  pivot_longer(c(Petal.L, Sepal.W), names_to = "measure", values_to = "value") %>%
+  filter(!is.na(value)) %>%
+  group_by(measure, group) %>%
+  mutate(z = abs(value - median(value)) / max(mad(value), 0.1),
+         flag = z > 10 | value <= 0) %>%
+  ungroup()
+
+# PLOT C: DISTANCE FROM ITS OWN SPECIES CENTRE IN PETAL LENGTH AND WIDTH, IN ROBUST SD UNITS (FLOOR 0.1 CM)
+cluster <- sheets %>%
+  filter(!sheet %in% shifted, species %in% species_list, !is.na(Petal.W),
+         !paste(sheet, row) %in% with(filter(pooled, flag), paste(sheet, row))) %>%
+  group_by(species) %>%
+  mutate(d = sqrt(((Petal.L - median(Petal.L)) / max(mad(Petal.L), 0.1))^2 +
+                  ((Petal.W - median(Petal.W)) / max(mad(Petal.W), 0.1))^2),
+         flag = d > 8) %>%
+  ungroup()
+
+# PLOT E AND F: SITES ON LAND AND WITHIN 300 KM OF THE STUDY REGION
+land <- ne_countries(scale = 50, returnclass = "sf")
+pts  <- st_as_sf(sheets, coords = c("lon", "lat"), crs = 4326, remove = FALSE)
+centre <- st_sfc(st_point(c(median(sheets$lon), median(sheets$lat))), crs = 4326)
+pts <- pts %>%
+  mutate(on_land = lengths(suppressMessages(st_intersects(pts, land))) > 0,
+         km = as.numeric(st_distance(pts, centre)) / 1000,
+         flag = !on_land | km > 300)
+
+# DUPLICATED ROWS ACROSS SHEETS
+dup_rows <- sheets %>%
+  group_by(across(all_of(meas)), species, site) %>%
+  filter(n() > 1, n_distinct(sheet) > 1) %>%
+  ungroup()
+```
+
+## Diagnostic plots
+
+```{r panels, fig.width = 13, fig.height = 8.2}
+# A: POOLED DISTRIBUTIONS
+pA <- pooled %>%
+  ggplot(aes(value)) +
+  geom_histogram(binwidth = 0.25, fill = BLACK, colour = "white", linewidth = 0.1) +
+  geom_point(data = ~ filter(.x, flag), aes(y = 1.5), colour = RED, size = 2.2) +
+  geom_text_repel(data = ~ filter(.x, flag), aes(y = 1.5, label = paste0(id, "\n", value)),
+                  colour = RED, size = 2.7, nudge_y = 12, segment.colour = RED, lineheight = 0.9) +
+  facet_wrap(~ measure, ncol = 1, scales = "free_x") +
+  labs(title = "A  Pooled distribution", subtitle = "Decimal slips and negative values",
+       x = "Value (cm)", y = "Rows")
+
+# B: ONE STRIP PER SHEET
+pB <- sheets %>%
+  mutate(sheet = factor(sheet, levels = rev(sort(unique(sheet)))),
+         flag = sheet %in% shifted) %>%
+  ggplot(aes(Petal.L, sheet, colour = flag)) +
+  geom_jitter(height = 0.15, width = 0, size = 1.3, alpha = 0.8) +
+  annotate("text", x = 35, y = "virginica_C", label = "whole sheet ~10x\n(entered in mm)",
+           colour = RED, size = 2.8, hjust = 1, lineheight = 0.9) +
+  scale_x_log10() +
+  scale_colour_manual(values = c(`FALSE` = BLACK, `TRUE` = RED)) +
+  labs(title = "B  Each study sheet", subtitle = "One sheet in the wrong unit",
+       x = "Petal length (log scale)", y = NULL)
+
+# C: PETAL LENGTH AGAINST WIDTH
+pC <- cluster %>%
+  ggplot(aes(Petal.L, Petal.W)) +
+  geom_point(aes(shape = species, colour = flag), size = 1.6) +
+  geom_text_repel(data = ~ filter(.x, flag),
+                  aes(label = paste0(id, "\noff the ", species, " cluster")),
+                  colour = RED, size = 2.6, lineheight = 0.9, segment.colour = RED,
+                  box.padding = 0.5, min.segment.length = 0, nudge_y = 0.9, nudge_x = -0.3) +
+  scale_shape_manual(values = c(setosa = 1, versicolor = 2, virginica = 0)) +
+  scale_colour_manual(values = c(`FALSE` = BLACK, `TRUE` = RED)) +
+  annotate("text", x = c(2.0, 3.0, 6.2), y = c(0.45, 1.75, 1.6),
+           label = c("setosa", "versicolor", "virginica"),
+           size = 2.8, colour = GREY, hjust = 0) +
+  labs(title = "C  Petal length vs width", subtitle = "Swapped columns and wrong species",
+       x = "Petal length (cm)", y = "Petal width (cm)")
+
+# D: CELLS FAILING VALIDATION PER SHEET AND COLUMN
+grid_d <- cell_fail %>%
+  group_by(sheet, column) %>%
+  summarise(n_fail = sum(fail), .groups = "drop") %>%
+  mutate(column = factor(column, levels = c("species", meas)),
+         sheet = factor(sheet, levels = rev(sort(unique(sheet)))))
+pD <- ggplot(grid_d, aes(column, sheet)) +
+  geom_tile(aes(fill = n_fail > 0), colour = "#dddddd", linewidth = 0.4) +
+  geom_text(aes(label = n_fail, colour = n_fail > 0), size = 3) +
+  scale_fill_manual(values = c(`FALSE` = "white", `TRUE` = RED)) +
+  scale_colour_manual(values = c(`FALSE` = GREY, `TRUE` = "white")) +
+  scale_x_discrete(position = "top") +
+  labs(title = "D  Cells failing validation", subtitle = "Blank cells, negatives, names off the list",
+       x = NULL, y = NULL) +
+  theme(axis.line = element_blank(), axis.ticks = element_blank())
+
+# E: SITES IN THE STUDY REGION
+region <- pts %>% filter(km <= 300)
+pE <- ggplot() +
+  geom_sf(data = land, fill = "#eeeeee", colour = GREY, linewidth = 0.2) +
+  geom_point(data = region, aes(lon, lat, colour = flag), size = 1.8) +
+  geom_text_repel(data = filter(region, flag),
+                  aes(lon, lat, label = paste0(id, "\nin the sea")),
+                  colour = RED, size = 2.6, lineheight = 0.9, nudge_y = 0.45, segment.colour = RED) +
+  scale_colour_manual(values = c(`FALSE` = BLACK, `TRUE` = RED)) +
+  coord_sf(xlim = c(-67.5, -62.5), ylim = c(47.6, 50.0), expand = FALSE) +
+  labs(title = "E  Sites, Gaspé Peninsula", subtitle = "A site off the coast", x = NULL, y = NULL)
+
+# F: SITES WORLDWIDE
+pF <- ggplot() +
+  geom_sf(data = land, fill = "#eeeeee", colour = NA) +
+  geom_point(data = pts, aes(lon, lat, colour = flag), size = 1.8) +
+  geom_text_repel(data = filter(pts, km > 300),
+                  aes(lon, lat, label = paste0(id, "\n", round(lat, 2), ", ", round(lon, 2))),
+                  colour = RED, size = 2.6, lineheight = 0.9, segment.colour = RED, nudge_y = 22) +
+  scale_colour_manual(values = c(`FALSE` = BLACK, `TRUE` = RED)) +
+  coord_sf(ylim = c(-80, 85), expand = FALSE) +
+  labs(title = "F  Sites, world view", subtitle = "Dropped minus sign and swapped lat/lon",
+       x = NULL, y = NULL) +
+  theme(axis.text = element_blank(), axis.ticks = element_blank(), axis.line = element_blank())
+
+(pA | pB | pC) / (pD | pE | pF)
+```
+
+```{r dup-table}
+dup_rows %>%
+  arrange(Sepal.L, sheet) %>%
+  select(sheet, row, whos, species, Sepal.L, Sepal.W, Petal.L, Petal.W, site) %>%
+  knitr::kable(caption = "Rows that appear identically in more than one sheet (copy and paste between sheets).")
+```
+
+## How many rows made it through
+
+```{r prisma, fig.width = 9, fig.height = 5.6}
+# COUNTS FOR EACH STEP
+n_rows   <- nrow(sheets)
+n_sheets <- n_distinct(sheets$sheet)
+rule     <- sheets %>% filter(fail_rule)
+passed   <- sheets %>% filter(!fail_rule)
+
+plot_flags <- bind_rows(
+  passed %>% filter(sheet %in% shifted) %>% transmute(sheet, row, reason = "Sheet in the wrong unit (B)"),
+  pooled %>% filter(flag, !fail_rule) %>% transmute(sheet, row, reason = "Outlier within its species (A)"),
+  cluster %>% filter(flag, !fail_rule) %>% transmute(sheet, row, reason = "Off its species cluster (C)"),
+  pts %>% st_drop_geometry() %>% filter(flag, !fail_rule) %>% transmute(sheet, row, reason = "Site off land or far away (E, F)"),
+  dup_rows %>% filter(!fail_rule) %>% arrange(sheet) %>% group_by(across(all_of(meas))) %>% slice(-1) %>% ungroup() %>%
+    transmute(sheet, row, reason = "Duplicated row (table)")
+) %>% distinct(sheet, row, .keep_all = TRUE)
+
+rule_reasons <- cell_fail %>% filter(fail) %>%
+  mutate(reason = case_when(column == "species" ~ "Species not on the list",
+                            TRUE ~ "Blank or non-positive measurement")) %>%
+  distinct(sheet, row, reason) %>% count(reason)
+flag_reasons <- plot_flags %>% count(reason)
+n_clean <- nrow(passed) - nrow(plot_flags)
+
+lines_of <- function(tab) paste0(tab$reason, ": ", tab$n, collapse = "\n")
+
+boxes <- tibble(
+  x = c(0, 0, 0, 1.25, 1.25),
+  y = c(3, 2, 1, 2.5, 1.5),
+  w = c(0.95, 0.95, 0.95, 1.15, 1.15),
+  h = c(0.42, 0.42, 0.42, 0.55, 0.75),
+  out = c(FALSE, FALSE, FALSE, TRUE, TRUE),
+  label = c(
+    paste0("Rows entered\nn = ", n_rows, " rows in ", n_sheets, " sheets"),
+    paste0("Passed schema and rule validation\nn = ", nrow(passed), " rows"),
+    paste0("Clean rows committed to git\nn = ", n_clean, " rows"),
+    paste0("Failed validation, n = ", nrow(rule), " rows\n", lines_of(rule_reasons)),
+    paste0("Flagged by diagnostic plots, n = ", nrow(plot_flags), " rows\n", lines_of(flag_reasons))
+  )
+)
+
+ggplot(boxes) +
+  geom_rect(aes(xmin = x - w / 2, xmax = x + w / 2, ymin = y - h / 2, ymax = y + h / 2,
+                colour = out), fill = "white", linewidth = 0.6) +
+  geom_text(aes(x, y, label = label, colour = out), size = 3.2, lineheight = 1.05) +
+  annotate("segment", x = 0, xend = 0, y = c(2.79, 1.79), yend = c(2.21, 1.21),
+           arrow = arrow(length = unit(2, "mm"), type = "closed"), linewidth = 0.5) +
+  annotate("segment", x = 0, xend = 0.675, y = c(2.5, 1.5), yend = c(2.5, 1.5),
+           arrow = arrow(length = unit(2, "mm"), type = "closed"), linewidth = 0.5, colour = RED) +
+  scale_colour_manual(values = c(`FALSE` = BLACK, `TRUE` = RED)) +
+  coord_cartesian(xlim = c(-0.55, 1.9), ylim = c(0.7, 3.3)) +
+  theme_void() + theme(legend.position = "none")
+```
+
+## Errors seeded in this example
+
+| Error | Sheet and row | Caught by |
+|---|---|---|
+| Decimal slip, petal length 1.4 typed as 14 | setosa_A r14 | Plot A |
+| Negative sepal width | versicolor_B r7 | Validation, plot A |
+| Whole sheet entered in mm | virginica_C, all rows | Plot B |
+| Petal length and width swapped | versicolor_A r3 to r5 | Plot C |
+| Virginica row labelled setosa | virginica_A r10 | Plot C |
+| Blank petal width cells | setosa_B r10 to r14 | Validation, plot D |
+| Species name not on the list ("Versicolor ") | versicolor_A r9 | Validation, plot D |
+| Site in the Gulf of St Lawrence | virginica_A r15 | Plot E |
+| Dropped minus sign on longitude | versicolor_B r12 | Plot F |
+| Latitude and longitude swapped | setosa_A r16 | Plot F |
+| Rows pasted into a second sheet | setosa_A r1 to r5, again as setosa_C r17 to r21 | Duplicate table |
+
+Anderson E (1936) The species problem in Iris. Annals of the Missouri Botanical Garden 23: 457–509.
