@@ -22,6 +22,8 @@ no othe operations have been done.  Once aggregated and summarize it moves to Le
 The "L0" folder in this repository represents the location of our 'raw' (check but not processed)
 data. 
 
+In addition to validating the structure of the files and the values within the
+constraints. we've added an exploratory analysis
 ---
 
 This was built work with CollaboratoR v1.1
